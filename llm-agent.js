@@ -3,7 +3,8 @@
  * Uses local Ollama LLM for strategy and decision making
  */
 
-import fetch from 'node-fetch';
+// Use native fetch (Node.js 18+ has built-in fetch)
+// For older versions, install node-fetch: npm install node-fetch
 
 export class LLMAgent {
   constructor(ollamaUrl = 'http://localhost:11434') {
