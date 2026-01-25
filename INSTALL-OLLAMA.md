@@ -1,6 +1,17 @@
-# Installing Ollama (Without Homebrew)
+# Installing Ollama
 
-Since Homebrew isn't installed, here are alternative ways to install Ollama:
+## Quick Start (If You Have Homebrew)
+
+If you have Homebrew installed:
+```bash
+brew install ollama
+ollama pull llama3.2
+ollama serve
+```
+
+**Don't have Homebrew?** See `INSTALL-HOMEBREW.md` to install it first, or use the methods below.
+
+## Alternative Methods (Without Homebrew)
 
 ## Option 1: Direct Download (Easiest)
 
