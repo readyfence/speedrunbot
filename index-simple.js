@@ -1,6 +1,7 @@
 import mineflayer from 'mineflayer';
 import pathfinderPlugin from 'mineflayer-pathfinder';
 import * as pvpModule from 'mineflayer-pvp';
+import { Vec3 } from 'vec3';
 
 // Simple working bot that actually does things
 const bot = mineflayer.createBot({
@@ -27,6 +28,8 @@ const { GoalBlock, GoalNear } = goals;
 
 let woodCount = 0;
 let phase = 'gathering_wood';
+let lastLocationReport = 0;
+const LOCATION_REPORT_INTERVAL = 10000; // Report location every 10 seconds
 
 bot.once('spawn', () => {
   console.log('✅ Bot spawned! Starting actions...');
@@ -241,29 +244,125 @@ async function craftTools() {
   // Craft pickaxe if needed
   if (!hasPickaxeNow) {
     console.log('Crafting wooden pickaxe...');
+    
+    // First, place the crafting table if we have one
+    if (hasTableNow) {
+      console.log('Placing crafting table...');
+      try {
+        const tableItem = itemsAfterTable.find(item => item.name === 'crafting_table');
+        if (tableItem) {
+          const pos = bot.entity.position;
+          const placePos = pos.offset(1, 0, 0);
+          const blockAt = bot.blockAt(placePos);
+          
+          if (blockAt && blockAt.name === 'air') {
+            await bot.equip(tableItem, 'hand');
+            await bot.placeBlock(blockAt, new Vec3(1, 0, 0));
+            console.log('✅ Crafting table placed!');
+            await sleep(1000);
+          }
+        }
+      } catch (error) {
+        console.error(`Error placing table: ${error.message}`);
+      }
+    }
+    
     try {
-      const pickaxeItem = bot.registry.itemsByName['wooden_pickaxe'];
-      if (!pickaxeItem) {
-        console.error('Wooden pickaxe not found in registry!');
-        return;
+      // Check materials
+      const currentItems = bot.inventory.items();
+      const planks = currentItems.filter(item => item.name.includes('planks'));
+      const sticks = currentItems.filter(item => item.name === 'stick');
+      const totalPlanks = planks.reduce((sum, i) => sum + i.count, 0);
+      const totalSticks = sticks.reduce((sum, i) => sum + i.count, 0);
+      
+      console.log(`Materials check: ${totalPlanks} planks, ${totalSticks} sticks (need 3 planks, 2 sticks)`);
+      
+      // Craft planks if needed
+      if (totalPlanks < 3) {
+        console.log('Crafting planks from logs...');
+        const logs = currentItems.filter(item => item.name.includes('log'));
+        if (logs.length > 0) {
+          const logItem = logs[0];
+          const logType = logItem.name.replace('_log', '');
+          const plankName = `${logType}_planks`;
+          
+          try {
+            const plankItem = bot.registry.itemsByName[plankName];
+            if (plankItem) {
+              const plankRecipes = bot.recipesFor(plankItem.id, null, 1);
+              if (plankRecipes && plankRecipes.length > 0) {
+                await bot.craft(plankRecipes[0], 4, null);
+                console.log('✅ Planks crafted!');
+                await sleep(1000);
+              }
+            }
+          } catch (error) {
+            console.error(`Error crafting planks: ${error.message}`);
+          }
+        } else {
+          console.log('No logs! Going back to gather wood.');
+          phase = 'gathering_wood';
+          return;
+        }
       }
       
-      const pickaxeRecipes = bot.recipesFor(pickaxeItem.id, null, 1);
-      if (pickaxeRecipes && pickaxeRecipes.length > 0) {
-        const pickaxeRecipe = pickaxeRecipes[0];
-        console.log('Found recipe, attempting to craft pickaxe...');
-        await bot.craft(pickaxeRecipe, 1, null);
-        console.log('✅ Wooden pickaxe crafted!');
-        // Wait a moment for inventory to update
-        await sleep(500);
-        phase = 'mining_stone';
+      // Craft sticks if needed
+      if (totalSticks < 2) {
+        console.log('Crafting sticks...');
+        try {
+          const stickItem = bot.registry.itemsByName['stick'];
+          if (stickItem) {
+            const stickRecipes = bot.recipesFor(stickItem.id, null, 1);
+            if (stickRecipes && stickRecipes.length > 0) {
+              await bot.craft(stickRecipes[0], 2, null);
+              console.log('✅ Sticks crafted!');
+              await sleep(1000);
+            }
+          }
+        } catch (error) {
+          console.error(`Error crafting sticks: ${error.message}`);
+        }
+      }
+      
+      // Final check before crafting pickaxe
+      const finalItems = bot.inventory.items();
+      const finalPlanks = finalItems.filter(item => item.name.includes('planks')).reduce((sum, i) => sum + i.count, 0);
+      const finalSticks = finalItems.filter(item => item.name === 'stick').reduce((sum, i) => sum + i.count, 0);
+      
+      if (finalPlanks >= 3 && finalSticks >= 2) {
+        console.log('All materials ready! Crafting pickaxe...');
+        const pickaxeItem = bot.registry.itemsByName['wooden_pickaxe'];
+        if (pickaxeItem) {
+          const pickaxeRecipes = bot.recipesFor(pickaxeItem.id, null, 1);
+          if (pickaxeRecipes && pickaxeRecipes.length > 0) {
+            await bot.craft(pickaxeRecipes[0], 1, null);
+            console.log('✅ Wooden pickaxe crafted!');
+            await sleep(1000);
+            
+            // Verify
+            const hasPickaxe = bot.inventory.items().some(item => item.name.includes('pickaxe'));
+            if (hasPickaxe) {
+              phase = 'mining_stone';
+            } else {
+              console.log('Pickaxe crafting may have failed, but continuing...');
+              phase = 'mining_stone'; // Try to continue anyway
+            }
+          } else {
+            console.error('No recipe found! Trying to continue without pickaxe...');
+            phase = 'mining_stone'; // Continue anyway
+          }
+        } else {
+          console.error('Pickaxe item not in registry! Continuing...');
+          phase = 'mining_stone';
+        }
       } else {
-        console.error('No recipe found for wooden pickaxe!');
-        return;
+        console.log(`Still need: ${Math.max(0, 3 - finalPlanks)} planks, ${Math.max(0, 2 - finalSticks)} sticks`);
+        // Don't return - keep trying
       }
     } catch (error) {
-      console.error(`Crafting pickaxe error: ${error.message}`);
-      return; // Exit if crafting fails
+      console.error(`Crafting error: ${error.message}`);
+      // Continue anyway
+      phase = 'mining_stone';
     }
   } else {
     console.log('✅ Already have pickaxe! Moving to mining phase.');
@@ -328,6 +427,27 @@ async function digDown() {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function reportLocation(timeElapsed) {
+  const pos = bot.entity.position;
+  const minutes = Math.floor(timeElapsed / 60);
+  const seconds = timeElapsed % 60;
+  
+  // Send to chat so it's visible in-game
+  const message = `[${minutes}m ${seconds}s] Bot at X:${Math.floor(pos.x)} Y:${Math.floor(pos.y)} Z:${Math.floor(pos.z)} | Phase: ${phase} | Wood: ${woodCount}`;
+  bot.chat(message);
+  console.log(`📍 ${message}`);
+  
+  // Also log inventory summary
+  const items = bot.inventory.items();
+  const inventorySummary = items
+    .filter(item => item.count > 0)
+    .map(item => `${item.name}:${item.count}`)
+    .join(', ');
+  if (inventorySummary) {
+    console.log(`   Inventory: ${inventorySummary}`);
+  }
 }
 
 console.log('🤖 Minecraft Speedrun AI Bot');
