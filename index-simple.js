@@ -34,6 +34,7 @@ const LOCATION_REPORT_INTERVAL = 10000; // Report location every 10 seconds
 bot.once('spawn', () => {
   console.log('✅ Bot spawned! Starting actions...');
   console.log(`Position: ${bot.entity.position}`);
+  startTime = Date.now();
   
   // Configure pathfinder after bot is ready
   const defaultMove = new Movements(bot);
@@ -91,6 +92,14 @@ async function startMainLoop() {
 }
 
 async function executePhase() {
+  // Report location periodically
+  const now = Date.now();
+  if (now - lastLocationReport > LOCATION_REPORT_INTERVAL) {
+    const timeElapsed = Math.floor((now - (startTime || now)) / 1000);
+    reportLocation(timeElapsed);
+    lastLocationReport = now;
+  }
+  
   console.log(`\n[Phase: ${phase}] Wood: ${woodCount}`);
   
   switch (phase) {
