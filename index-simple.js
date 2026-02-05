@@ -28,6 +28,7 @@ const { GoalBlock, GoalNear } = goals;
 
 let woodCount = 0;
 let phase = 'gathering_wood';
+let startTime = null;
 let lastLocationReport = 0;
 const LOCATION_REPORT_INTERVAL = 10000; // Report location every 10 seconds
 
