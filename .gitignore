@@ -5,3 +5,12 @@ node_modules/
 *.cache
 dist/
 build/
+world/
+*.pth
+*.pt
+models/
+checkpoints/
+*.h5
+*.ckpt
+rl_data/
+training_data/

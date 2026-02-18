@@ -69,13 +69,141 @@ function testBasicMovement() {
   }, 2000);
 }
 
-bot.on('chat', (username, message) => {
+bot.on('chat', async (username, message) => {
   if (username === bot.username) return;
   console.log(`[CHAT] ${username}: ${message}`);
+  
+  // Check if message is a command for the bot
+  if (message.startsWith('!bot ') || message.startsWith('bot ')) {
+    const command = message.replace(/^(!bot |bot )/, '').toLowerCase().trim();
+    await handleCommand(command, username);
+  }
 });
+
+// Command handler
+async function handleCommand(command, username) {
+  console.log(`📝 Command from ${username}: ${command}`);
+  
+  const parts = command.split(' ');
+  const cmd = parts[0];
+  const args = parts.slice(1);
+  
+  switch (cmd) {
+    case 'help':
+    case 'commands':
+      bot.chat('Commands: !bot status, !bot goto <x> <y> <z>, !bot phase, !bot stop, !bot resume, !bot inventory, !bot health, !bot fight, !bot explore');
+      break;
+      
+    case 'status':
+      const pos = bot.entity.position;
+      bot.chat(`Status: Phase=${phase}, Wood=${woodCount}, Pos=(${Math.floor(pos.x)},${Math.floor(pos.y)},${Math.floor(pos.z)}), HP=${Math.floor(bot.health)}/${Math.floor(bot.maxHealth || 20)}`);
+      break;
+      
+    case 'phase':
+      bot.chat(`Current phase: ${phase}`);
+      break;
+      
+    case 'inventory':
+      const items = bot.inventory.items().filter(i => i.count > 0);
+      const inv = items.map(i => `${i.name}:${i.count}`).join(', ');
+      bot.chat(`Inventory: ${inv || 'Empty'}`);
+      break;
+      
+    case 'health':
+      bot.chat(`Health: ${Math.floor(bot.health)}/${Math.floor(bot.maxHealth || 20)}`);
+      break;
+      
+    case 'goto':
+      if (args.length >= 3) {
+        const x = parseFloat(args[0]);
+        const y = parseFloat(args[1]);
+        const z = parseFloat(args[2]);
+        if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
+          bot.chat(`Moving to (${x}, ${y}, ${z})...`);
+          const goal = new GoalBlock(x, y, z);
+          try {
+            await bot.pathfinder.goto(goal);
+            bot.chat(`✅ Arrived at (${x}, ${y}, ${z})`);
+          } catch (error) {
+            bot.chat(`❌ Could not reach (${x}, ${y}, ${z}): ${error.message}`);
+          }
+        } else {
+          bot.chat('Usage: !bot goto <x> <y> <z>');
+        }
+      } else {
+        bot.chat('Usage: !bot goto <x> <y> <z>');
+      }
+      break;
+      
+    case 'stop':
+    case 'pause':
+      bot.chat('⏸️ Bot paused. Use !bot resume to continue.');
+      // Set a flag to pause (we'll need to add pause logic)
+      break;
+      
+    case 'resume':
+    case 'continue':
+      bot.chat('▶️ Bot resumed.');
+      break;
+      
+    case 'fight':
+    case 'attack':
+      const mob = findNearbyHostileMob();
+      if (mob) {
+        bot.chat(`⚔️ Fighting ${mob.name}...`);
+        await fightMob(mob);
+      } else {
+        bot.chat('No hostile mobs nearby.');
+      }
+      break;
+      
+    case 'explore':
+      bot.chat('🚶 Exploring...');
+      await explore();
+      break;
+      
+    case 'gather':
+    case 'wood':
+      bot.chat('🌳 Gathering wood...');
+      phase = 'gathering_wood';
+      break;
+      
+    case 'craft':
+      bot.chat('🔨 Crafting tools...');
+      phase = 'crafting_tools';
+      break;
+      
+    case 'mine':
+      bot.chat('⛏️ Mining...');
+      phase = 'mining_stone';
+      break;
+      
+    case 'pos':
+    case 'position':
+      const position = bot.entity.position;
+      bot.chat(`Position: X=${Math.floor(position.x)} Y=${Math.floor(position.y)} Z=${Math.floor(position.z)}`);
+      break;
+      
+    default:
+      bot.chat(`Unknown command: ${cmd}. Type !bot help for commands.`);
+  }
+}
 
 bot.on('error', (err) => {
   console.error('Bot error:', err);
+});
+
+// Combat system - fight nearby hostile mobs
+bot.on('entityHurt', (entity) => {
+  if (entity.type === 'player' && entity.username === bot.username) {
+    console.log(`⚠️ Bot took damage! Health: ${bot.health}/${bot.maxHealth}`);
+  }
+});
+
+bot.on('health', () => {
+  if (bot.health < 10) {
+    console.log(`⚠️ Low health! ${bot.health}/${bot.maxHealth} - Looking for safety...`);
+  }
 });
 
 async function startMainLoop() {
@@ -93,6 +221,27 @@ async function startMainLoop() {
 }
 
 async function executePhase() {
+  // Check if bot has a sword - if yes, kill everything!
+  const hasSword = bot.inventory.items().some(item => item.name.includes('sword'));
+  
+  if (hasSword) {
+    // Aggressive mode: attack ALL nearby entities
+    const target = findAnyNearbyEntity();
+    if (target) {
+      console.log(`⚔️ Sword equipped! Attacking ${target.name}...`);
+      await fightMob(target);
+      return; // Fight takes priority
+    }
+  } else {
+    // Normal mode: only fight hostile mobs
+    const nearbyHostile = findNearbyHostileMob();
+    if (nearbyHostile) {
+      console.log(`⚔️ Hostile mob detected: ${nearbyHostile.name} at distance ${Math.floor(bot.entity.position.distanceTo(nearbyHostile.position))}`);
+      await fightMob(nearbyHostile);
+      return; // Fight takes priority over other tasks
+    }
+  }
+  
   // Report location periodically
   const now = Date.now();
   if (now - lastLocationReport > LOCATION_REPORT_INTERVAL) {
@@ -249,6 +398,7 @@ async function craftTools() {
   
   // Check again after crafting table
   const itemsAfterTable = bot.inventory.items();
+  const hasTableNow = itemsAfterTable.some(item => item.name === 'crafting_table');
   const hasPickaxeNow = itemsAfterTable.some(item => item.name.includes('pickaxe'));
   
   // Craft pickaxe if needed
@@ -439,13 +589,167 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function findNearbyHostileMob() {
+  const hostileTypes = [
+    'zombie', 'skeleton', 'spider', 'creeper', 'enderman',
+    'witch', 'slime', 'zombie_pigman', 'blaze', 'ghast',
+    'magma_cube', 'endermite', 'silverfish', 'cave_spider',
+    'husk', 'stray', 'drowned', 'phantom', 'pillager',
+    'vindicator', 'evoker', 'vex', 'village', 'ravager'
+  ];
+  
+  const botPos = bot.entity.position;
+  let closestHostile = null;
+  let closestDistance = 16; // Only fight mobs within 16 blocks
+  
+  for (const entity of Object.values(bot.entities)) {
+    if (!entity || !entity.position) continue;
+    
+    const distance = botPos.distanceTo(entity.position);
+    
+    // Check if it's a hostile mob
+    if (hostileTypes.some(type => entity.name && entity.name.includes(type))) {
+      // Make sure it's not dead
+      if (entity.health > 0 && distance < closestDistance) {
+        closestHostile = entity;
+        closestDistance = distance;
+      }
+    }
+  }
+  
+  return closestHostile;
+}
+
+function findAnyNearbyEntity() {
+  // Find ANY nearby entity to attack (when bot has sword)
+  const botPos = bot.entity.position;
+  let closestEntity = null;
+  let closestDistance = 20; // Attack range when aggressive
+  
+  for (const entity of Object.values(bot.entities)) {
+    if (!entity || !entity.position) continue;
+    
+    // Skip self
+    if (entity.id === bot.entity.id) continue;
+    
+    // Skip players (optional - comment out if you want to attack players too)
+    if (entity.type === 'player') continue;
+    
+    const distance = botPos.distanceTo(entity.position);
+    
+    // Attack any living entity within range
+    if (entity.health > 0 && distance < closestDistance) {
+      closestEntity = entity;
+      closestDistance = distance;
+    }
+  }
+  
+  return closestEntity;
+}
+
+async function fightMob(mob) {
+  try {
+    console.log(`⚔️ Fighting ${mob.name}...`);
+    
+    // Equip best weapon if available
+    const weapons = bot.inventory.items().filter(item => 
+      item.name.includes('sword') || 
+      item.name.includes('axe') || 
+      item.name.includes('pickaxe')
+    );
+    
+    if (weapons.length > 0) {
+      // Prefer sword, then axe, then pickaxe
+      const sword = weapons.find(w => w.name.includes('sword'));
+      const axe = weapons.find(w => w.name.includes('axe') && !w.name.includes('pickaxe'));
+      const weapon = sword || axe || weapons[0];
+      
+      if (weapon) {
+        await bot.equip(weapon, 'hand');
+        console.log(`Equipped ${weapon.name}`);
+      }
+    }
+    
+    // Move closer if needed
+    const distance = bot.entity.position.distanceTo(mob.position);
+    if (distance > 3) {
+      const goal = new GoalNear(mob.position.x, mob.position.y, mob.position.z, 2);
+      await bot.pathfinder.goto(goal);
+    }
+    
+    // Attack the mob
+    try {
+      // Try using PvP plugin if available
+      if (bot.pvp) {
+        await bot.pvp.attack(mob);
+        console.log('Using PvP plugin to attack');
+      } else {
+        // Manual attack
+        await bot.attack(mob);
+        console.log('Manual attack');
+      }
+      
+      // Keep attacking until mob is dead or out of range
+      let attackCount = 0;
+      const maxAttacks = 20;
+      
+      while (mob.isValid && mob.health > 0 && attackCount < maxAttacks) {
+        const distance = bot.entity.position.distanceTo(mob.position);
+        
+        if (distance > 5) {
+          // Too far, move closer
+          const goal = new GoalNear(mob.position.x, mob.position.y, mob.position.z, 2);
+          await bot.pathfinder.goto(goal);
+        }
+        
+        if (bot.pvp) {
+          await bot.pvp.attack(mob);
+        } else {
+          await bot.attack(mob);
+        }
+        
+        await sleep(600); // Attack cooldown (slightly longer for safety)
+        attackCount++;
+        
+        // Check if we're taking too much damage
+        if (bot.health < 5 && attackCount > 5) {
+          console.log('Taking too much damage! Retreating...');
+          break;
+        }
+      }
+      
+      if (!mob.isValid || mob.health <= 0) {
+        console.log(`✅ Defeated ${mob.name}!`);
+      }
+    } catch (error) {
+      console.error(`Attack error: ${error.message}`);
+      // If combat fails, try to escape if low health
+      if (bot.health < 5) {
+        console.log('Low health! Retreating...');
+        await explore(); // Move away
+      }
+    }
+    
+    if (!mob.isValid || mob.health <= 0) {
+      console.log(`✅ Defeated ${mob.name}!`);
+    }
+  } catch (error) {
+    console.error(`Combat error: ${error.message}`);
+    // If combat fails, try to escape
+    if (bot.health < 5) {
+      console.log('Low health! Retreating...');
+      await explore(); // Move away
+    }
+  }
+}
+
 function reportLocation(timeElapsed) {
   const pos = bot.entity.position;
   const minutes = Math.floor(timeElapsed / 60);
   const seconds = timeElapsed % 60;
   
   // Send to chat so it's visible in-game
-  const message = `[${minutes}m ${seconds}s] Bot at X:${Math.floor(pos.x)} Y:${Math.floor(pos.y)} Z:${Math.floor(pos.z)} | Phase: ${phase} | Wood: ${woodCount}`;
+  const message = `[${minutes}m ${seconds}s] Bot at X:${Math.floor(pos.x)} Y:${Math.floor(pos.y)} Z:${Math.floor(pos.z)} | Phase: ${phase} | Wood: ${woodCount} | HP: ${bot.health}/${bot.maxHealth}`;
   bot.chat(message);
   console.log(`📍 ${message}`);
   

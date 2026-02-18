@@ -552,4 +552,4 @@ console.log(`
 `);
 
 const ai = new MinecraftSpeedrunAI(host, port, username);
-ai.start().catch(console.error);
+ai.start().catch(console.error
